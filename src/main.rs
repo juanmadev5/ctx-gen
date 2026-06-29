@@ -3,8 +3,12 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use zip::write::FileOptions;
+use zip::ZipWriter;
 
-const OUTPUT_FILE: &str = "context.md";
+const OUTPUT_MD: &str = "context.md";
+const OUTPUT_ZIP: &str = "context.zip";
+const MAX_LINES_PER_FILE: usize = 1000;
 
 const EXCLUDED_FILENAMES: [&str; 13] = [
     "Cargo.lock",
@@ -64,11 +68,30 @@ fn is_excluded_filename(path: &Path) -> bool {
     if EXCLUDED_FILENAMES.iter().any(|&e| e == name) {
         return true;
     }
-    // Minified files: foo.min.js, bar.min.css, etc.
     path.file_stem()
         .and_then(|s| s.to_str())
         .map(|s| s.ends_with(".min"))
         .unwrap_or(false)
+}
+
+fn is_ctx_output(path: &Path, output_md_canon: &Option<PathBuf>) -> bool {
+    if let Some(ref canon) = output_md_canon {
+        if path.canonicalize().ok().as_ref() == Some(canon) {
+            return true;
+        }
+    }
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    // Skip context-1.md, context-2.md, etc.
+    if let Some(rest) = name.strip_prefix("context-") {
+        if let Some(num) = rest.strip_suffix(".md") {
+            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn is_binary_extension(path: &Path) -> bool {
@@ -85,7 +108,6 @@ fn is_text_extension(path: &Path) -> bool {
     })
 }
 
-/// Sniff the first 8 KB for NUL bytes — fast binary detection.
 fn is_binary_content(path: &Path) -> bool {
     let Ok(bytes) = fs::read(path) else { return true };
     let sample = &bytes[..bytes.len().min(8192)];
@@ -137,8 +159,7 @@ fn lang_hint(path: &Path) -> &str {
 }
 
 fn collect_files(root: &Path) -> Vec<PathBuf> {
-    let output_canonical = root.join(OUTPUT_FILE).canonicalize().ok();
-
+    let output_md_canon = root.join(OUTPUT_MD).canonicalize().ok();
     let mut files: BTreeSet<PathBuf> = BTreeSet::new();
 
     let walker = WalkBuilder::new(root)
@@ -153,10 +174,7 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
     for result in walker {
         let entry = match result {
             Ok(e) => e,
-            Err(e) => {
-                eprintln!("Warning: {e}");
-                continue;
-            }
+            Err(e) => { eprintln!("Warning: {e}"); continue; }
         };
 
         if entry.file_type().map(|ft| !ft.is_file()).unwrap_or(true) {
@@ -165,29 +183,22 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
 
         let path = entry.path().to_path_buf();
 
-        // Skip .git internals.
         if path.components().any(|c| c.as_os_str() == ".git") {
             continue;
         }
 
-        // Skip the output file itself.
-        if let Some(ref canon) = output_canonical {
-            if path.canonicalize().ok().as_ref() == Some(canon) {
-                continue;
-            }
+        if is_ctx_output(&path, &output_md_canon) {
+            continue;
         }
 
-        // Skip lock files and other excluded filenames.
         if is_excluded_filename(&path) {
             continue;
         }
 
-        // Skip by extension first (cheap).
         if is_binary_extension(&path) {
             continue;
         }
 
-        // Skip if not a known text extension AND binary content.
         if !is_text_extension(&path) && is_binary_content(&path) {
             continue;
         }
@@ -198,44 +209,75 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
     files.into_iter().collect()
 }
 
-fn write_tree(out: &mut impl Write, files: &[PathBuf], root: &Path) -> io::Result<()> {
-    writeln!(out, "## Árbol de archivos\n")?;
-    writeln!(out, "```")?;
+fn build_header(root: &Path, files: &[PathBuf]) -> String {
+    let project = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("proyecto");
+
+    let mut out = String::new();
+    out.push_str(&format!("# Contexto del proyecto: {project}\n\n"));
+    out.push_str("> Generado automáticamente por **ctx-gen**. No editar manualmente.\n\n");
+
+    out.push_str("## Árbol de archivos\n\n```\n");
     for path in files {
         let rel = path.strip_prefix(root).unwrap_or(path);
-        writeln!(out, "{}", rel.display())?;
+        out.push_str(&format!("{}\n", rel.display()));
     }
-    writeln!(out, "```\n")?;
-    Ok(())
+    out.push_str("```\n\n---\n\n## Contenido de archivos\n\n");
+    out
 }
 
-fn write_file_section(out: &mut impl Write, path: &Path, root: &Path) -> io::Result<()> {
+fn build_file_section(path: &Path, root: &Path) -> String {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Warning: cannot read {}: {e}", path.display());
-            return Ok(());
+            return String::new();
         }
     };
 
     let lang = lang_hint(path);
-    writeln!(out, "## Archivo: {}\n", rel.display())?;
-    writeln!(out, "```{lang}")?;
-    // Escape any closing fence that would break the markdown block.
     let safe = content.replace("```", "` ` `");
-    write!(out, "{safe}")?;
-    if !safe.ends_with('\n') {
-        writeln!(out)?;
+    let trailing = if safe.ends_with('\n') { "" } else { "\n" };
+    format!("## Archivo: {}\n\n```{lang}\n{safe}{trailing}```\n\n", rel.display())
+}
+
+fn split_into_pages(header: String, sections: Vec<String>, max_lines: usize) -> Vec<String> {
+    let mut pages: Vec<String> = Vec::new();
+    let mut current = header;
+    let mut current_lines = current.lines().count();
+    let mut page_has_section = false;
+
+    for section in sections {
+        let section_lines = section.lines().count();
+
+        if page_has_section && current_lines + section_lines > max_lines {
+            pages.push(current);
+            let part = pages.len() + 1;
+            current = format!(
+                "# Contexto del proyecto (parte {part})\n\n\
+                 > Continuación — ver parte 1 para el árbol de archivos.\n\n\
+                 ---\n\n## Contenido de archivos\n\n"
+            );
+            current_lines = current.lines().count();
+        }
+
+        current_lines += section_lines;
+        current.push_str(&section);
+        page_has_section = true;
     }
-    writeln!(out, "```\n")?;
-    Ok(())
+
+    if page_has_section || pages.is_empty() {
+        pages.push(current);
+    }
+
+    pages
 }
 
 fn main() -> io::Result<()> {
     let root = std::env::current_dir()?;
-    let output_path = root.join(OUTPUT_FILE);
-
     let files = collect_files(&root);
 
     if files.is_empty() {
@@ -243,37 +285,61 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    println!(
-        "Generando {} con {} archivo(s)…",
-        OUTPUT_FILE,
-        files.len()
-    );
+    println!("Procesando {} archivo(s)…", files.len());
 
-    let mut buf: Vec<u8> = Vec::new();
+    let header = build_header(&root, &files);
+    let sections: Vec<String> = files
+        .iter()
+        .map(|p| build_file_section(p, &root))
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    writeln!(
-        buf,
-        "# Contexto del proyecto: {}\n",
-        root.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("proyecto")
-    )?;
-    writeln!(
-        buf,
-        "> Generado automáticamente por **ctx-gen**. No editar manualmente.\n"
-    )?;
+    let pages = split_into_pages(header, sections, MAX_LINES_PER_FILE);
 
-    write_tree(&mut buf, &files, &root)?;
+    if pages.len() == 1 {
+        let output_path = root.join(OUTPUT_MD);
+        fs::write(&output_path, pages[0].as_bytes())?;
 
-    writeln!(buf, "---\n")?;
-    writeln!(buf, "## Contenido de archivos\n")?;
+        // Clean up zip from a previous run if it exists.
+        let zip_path = root.join(OUTPUT_ZIP);
+        if zip_path.exists() {
+            fs::remove_file(&zip_path)?;
+        }
 
-    for path in &files {
-        write_file_section(&mut buf, path, &root)?;
+        println!(
+            "✓ {} generado ({} bytes)",
+            OUTPUT_MD,
+            pages[0].len()
+        );
+    } else {
+        let zip_path = root.join(OUTPUT_ZIP);
+        let file = fs::File::create(&zip_path)?;
+        let mut zip = ZipWriter::new(file);
+        let options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        for (i, page) in pages.iter().enumerate() {
+            let name = format!("context-{}.md", i + 1);
+            zip.start_file(&name, options)?;
+            zip.write_all(page.as_bytes())?;
+        }
+
+        let zip_file = zip.finish()?;
+        let zip_size = zip_file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        // Clean up single context.md from a previous run if it exists.
+        let md_path = root.join(OUTPUT_MD);
+        if md_path.exists() {
+            fs::remove_file(&md_path)?;
+        }
+
+        println!(
+            "✓ {} generado — {} partes, {} bytes comprimidos",
+            OUTPUT_ZIP,
+            pages.len(),
+            zip_size
+        );
     }
-
-    fs::write(&output_path, &buf)?;
-    println!("✓ {} generado ({} bytes)", OUTPUT_FILE, buf.len());
 
     Ok(())
 }
