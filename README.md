@@ -29,6 +29,16 @@ Si el proyecto crece o se reduce entre ejecuciones, el archivo del modo anterior
 
 Cada parte incluye su propio encabezado. La parte 1 siempre contiene el árbol de archivos completo.
 
+## Compresión de código
+
+El contenido de cada archivo se comprime antes de escribirse para reducir el uso de tokens:
+
+- Se eliminan las líneas en blanco
+- Se eliminan los comentarios que ocupan línea propia (`//`, `#`, `--`, `/* */`)
+- Los comentarios inline (`codigo(); // nota`) se preservan
+- Markdown, RST y archivos de texto no se tocan (el espacio es semántico)
+- En archivos de configuración (YAML, TOML, JSON...) solo se eliminan líneas en blanco
+
 ## Qué se incluye y qué no
 
 **Respeta `.gitignore` automáticamente** — `node_modules/`, `target/`, `dist/` y cualquier cosa ignorada por git queda fuera.

@@ -1,3 +1,105 @@
+# Contexto del proyecto: ctx-gen
+
+> Generado automáticamente por **ctx-gen**. No editar manualmente.
+
+## Árbol de archivos
+
+```
+.gitignore
+Cargo.toml
+README.md
+src/main.rs
+```
+
+---
+
+## Contenido de archivos
+
+## Archivo: .gitignore
+
+```
+/target
+```
+
+## Archivo: Cargo.toml
+
+```toml
+[package]
+name = "ctx-gen"
+version = "0.1.0"
+edition = "2021"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+ignore = "=0.4.21"
+globset = "=0.4.14"
+zip = { version = "=0.6.6", default-features = false, features = ["deflate"] }
+```
+
+## Archivo: README.md
+
+```markdown
+# ctx-gen
+
+Genera un archivo de contexto con todo el código de tu proyecto, listo para pasarlo a un agente de IA.
+
+## Instalación
+
+Requiere [rustup](https://rustup.rs).
+
+` ` `bash
+git clone <repo>
+cd ctx-gen
+cargo install --path .
+` ` `
+
+## Uso
+
+Ejecuta desde la raíz de cualquier proyecto:
+
+` ` `bash
+ctx-gen
+` ` `
+
+El output depende del tamaño del proyecto:
+
+- **≤ 1000 líneas** → genera `context.md` en la raíz
+- **> 1000 líneas** → genera `context.zip` con `context-1.md`, `context-2.md`, etc.
+
+Si el proyecto crece o se reduce entre ejecuciones, el archivo del modo anterior se elimina automáticamente.
+
+Cada parte incluye su propio encabezado. La parte 1 siempre contiene el árbol de archivos completo.
+
+## Qué se incluye y qué no
+
+**Respeta `.gitignore` automáticamente** — `node_modules/`, `target/`, `dist/` y cualquier cosa ignorada por git queda fuera.
+
+**Excluye por defecto:**
+- Archivos binarios e imágenes
+- Lock files (`Cargo.lock`, `package-lock.json`, `yarn.lock`, `go.sum`, etc.)
+- Archivos minificados (`*.min.js`, `*.min.css`)
+- El propio `context.md` / `context.zip` y partes anteriores
+- El directorio `.git/`
+
+## .ctxignore
+
+Para excluir archivos específicos del proyecto, crea un `.ctxignore` en la raíz con la misma sintaxis que `.gitignore`:
+
+` ` `gitignore
+# Fixtures de test
+tests/fixtures/
+**/*.snap
+
+# Código generado
+src/generated/
+proto/gen/
+` ` `
+
+El `.ctxignore` se aplica en cascada igual que `.gitignore` — puedes poner uno en cualquier subdirectorio.
+```
+
+## Archivo: src/main.rs
+
+```rust
 use ignore::WalkBuilder;
 use std::collections::BTreeSet;
 use std::fs;
@@ -5,11 +107,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use zip::write::FileOptions;
 use zip::ZipWriter;
-
 const OUTPUT_MD: &str = "context.md";
 const OUTPUT_ZIP: &str = "context.zip";
 const MAX_LINES_PER_FILE: usize = 1000;
-
 const EXCLUDED_FILENAMES: [&str; 13] = [
     "Cargo.lock",
     "package-lock.json",
@@ -25,7 +125,6 @@ const EXCLUDED_FILENAMES: [&str; 13] = [
     "packages.lock.json",
     "go.sum",
 ];
-
 const TEXT_EXTENSIONS: [&str; 84] = [
     "c", "h", "cpp", "cc", "cxx", "hpp", "hxx",
     "rs", "go", "py", "js", "ts", "jsx", "tsx",
@@ -45,7 +144,6 @@ const TEXT_EXTENSIONS: [&str; 84] = [
     "tf", "tfvars", "hcl",
     "svelte", "vue", "astro",
 ];
-
 const BINARY_EXTENSIONS: [&str; 53] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg", "webp", "tiff", "tif",
     "mp3", "mp4", "wav", "ogg", "flac", "avi", "mov", "mkv", "webm",
@@ -56,11 +154,9 @@ const BINARY_EXTENSIONS: [&str; 53] = [
     "db", "sqlite", "sqlite3",
     "bin", "dat", "class", "pyc", "pyd",
 ];
-
 fn extension(path: &Path) -> Option<&str> {
     path.extension()?.to_str()
 }
-
 fn is_excluded_filename(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -73,7 +169,6 @@ fn is_excluded_filename(path: &Path) -> bool {
         .map(|s| s.ends_with(".min"))
         .unwrap_or(false)
 }
-
 fn is_ctx_output(path: &Path, output_md_canon: &Option<PathBuf>) -> bool {
     if let Some(ref canon) = output_md_canon {
         if path.canonicalize().ok().as_ref() == Some(canon) {
@@ -83,7 +178,6 @@ fn is_ctx_output(path: &Path, output_md_canon: &Option<PathBuf>) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    // Skip context-1.md, context-2.md, etc.
     if let Some(rest) = name.strip_prefix("context-") {
         if let Some(num) = rest.strip_suffix(".md") {
             if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
@@ -93,27 +187,23 @@ fn is_ctx_output(path: &Path, output_md_canon: &Option<PathBuf>) -> bool {
     }
     false
 }
-
 fn is_binary_extension(path: &Path) -> bool {
     extension(path).map_or(false, |ext| {
         let lower = ext.to_lowercase();
         BINARY_EXTENSIONS.iter().any(|&e| e == lower)
     })
 }
-
 fn is_text_extension(path: &Path) -> bool {
     extension(path).map_or(false, |ext| {
         let lower = ext.to_lowercase();
         TEXT_EXTENSIONS.iter().any(|&e| e == lower)
     })
 }
-
 fn is_binary_content(path: &Path) -> bool {
     let Ok(bytes) = fs::read(path) else { return true };
     let sample = &bytes[..bytes.len().min(8192)];
     sample.contains(&0u8)
 }
-
 fn lang_hint(path: &Path) -> &str {
     match extension(path).unwrap_or("").to_lowercase().as_str() {
         "rs" => "rust",
@@ -157,11 +247,9 @@ fn lang_hint(path: &Path) -> &str {
         _ => "",
     }
 }
-
 fn collect_files(root: &Path) -> Vec<PathBuf> {
     let output_md_canon = root.join(OUTPUT_MD).canonicalize().ok();
     let mut files: BTreeSet<PathBuf> = BTreeSet::new();
-
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .git_ignore(true)
@@ -170,71 +258,54 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
         .require_git(false)
         .add_custom_ignore_filename(".ctxignore")
         .build();
-
     for result in walker {
         let entry = match result {
             Ok(e) => e,
             Err(e) => { eprintln!("Warning: {e}"); continue; }
         };
-
         if entry.file_type().map(|ft| !ft.is_file()).unwrap_or(true) {
             continue;
         }
-
         let path = entry.path().to_path_buf();
-
         if path.components().any(|c| c.as_os_str() == ".git") {
             continue;
         }
-
         if is_ctx_output(&path, &output_md_canon) {
             continue;
         }
-
         if is_excluded_filename(&path) {
             continue;
         }
-
         if is_binary_extension(&path) {
             continue;
         }
-
         if !is_text_extension(&path) && is_binary_content(&path) {
             continue;
         }
-
         files.insert(path);
     }
-
     files.into_iter().collect()
 }
-
 fn build_header(root: &Path, files: &[PathBuf]) -> String {
     let project = root
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("proyecto");
-
     let mut out = String::new();
     out.push_str(&format!("# Contexto del proyecto: {project}\n\n"));
     out.push_str("> Generado automáticamente por **ctx-gen**. No editar manualmente.\n\n");
-
-    out.push_str("## Árbol de archivos\n\n```\n");
+    out.push_str("## Árbol de archivos\n\n` ` `\n");
     for path in files {
         let rel = path.strip_prefix(root).unwrap_or(path);
         out.push_str(&format!("{}\n", rel.display()));
     }
-    out.push_str("```\n\n---\n\n## Contenido de archivos\n\n");
+    out.push_str("` ` `\n\n---\n\n## Contenido de archivos\n\n");
     out
 }
-
 fn compress_content(content: &str, lang: &str) -> String {
-    // Preserve whitespace in formats where it's semantically meaningful.
     if matches!(lang, "markdown" | "rst" | "") {
         return content.to_string();
     }
-
-    // Determine comment syntax for this language.
     let (line_prefix, has_block_comments) = match lang {
         "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin"
         | "swift" | "csharp" | "cpp" | "c" | "scala" | "css" | "scss"
@@ -242,31 +313,22 @@ fn compress_content(content: &str, lang: &str) -> String {
         "python" | "ruby" | "elixir" | "bash" | "r" => (Some("#"), false),
         "sql" => (Some("--"), true),
         "lua" | "haskell" => (Some("--"), false),
-        // Config/data files: only drop blank lines, keep comments.
         _ => (None, false),
     };
-
     let mut out = String::with_capacity(content.len());
     let mut in_block = false;
     let mut is_first = true;
-
     for line in content.lines() {
         let trimmed = line.trim();
-
-        // Inside a /* ... */ block — skip until closing tag.
         if in_block {
             if trimmed.contains("*/") {
                 in_block = false;
             }
             continue;
         }
-
-        // Drop blank lines.
         if trimmed.is_empty() {
             continue;
         }
-
-        // Always keep shebangs.
         if is_first && trimmed.starts_with("#!") {
             out.push_str(line);
             out.push('\n');
@@ -274,29 +336,22 @@ fn compress_content(content: &str, lang: &str) -> String {
             continue;
         }
         is_first = false;
-
-        // Block comment opening (/* ... without closing on same line).
         if has_block_comments && trimmed.starts_with("/*") {
             if !trimmed.contains("*/") {
                 in_block = true;
             }
             continue;
         }
-
-        // Whole-line comment.
         if let Some(prefix) = line_prefix {
             if trimmed.starts_with(prefix) {
                 continue;
             }
         }
-
         out.push_str(line);
         out.push('\n');
     }
-
     out
 }
-
 fn build_file_section(path: &Path, root: &Path) -> String {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let content = match fs::read_to_string(path) {
@@ -306,23 +361,19 @@ fn build_file_section(path: &Path, root: &Path) -> String {
             return String::new();
         }
     };
-
     let lang = lang_hint(path);
     let compressed = compress_content(&content, lang);
-    let safe = compressed.replace("```", "` ` `");
+    let safe = compressed.replace("` ` `", "` ` `");
     let trailing = if safe.ends_with('\n') { "" } else { "\n" };
-    format!("## Archivo: {}\n\n```{lang}\n{safe}{trailing}```\n\n", rel.display())
+    format!("## Archivo: {}\n\n` ` `{lang}\n{safe}{trailing}` ` `\n\n", rel.display())
 }
-
 fn split_into_pages(header: String, sections: Vec<String>, max_lines: usize) -> Vec<String> {
     let mut pages: Vec<String> = Vec::new();
     let mut current = header;
     let mut current_lines = current.lines().count();
     let mut page_has_section = false;
-
     for section in sections {
         let section_lines = section.lines().count();
-
         if page_has_section && current_lines + section_lines > max_lines {
             pages.push(current);
             let part = pages.len() + 1;
@@ -333,49 +384,37 @@ fn split_into_pages(header: String, sections: Vec<String>, max_lines: usize) -> 
             );
             current_lines = current.lines().count();
         }
-
         current_lines += section_lines;
         current.push_str(&section);
         page_has_section = true;
     }
-
     if page_has_section || pages.is_empty() {
         pages.push(current);
     }
-
     pages
 }
-
 fn main() -> io::Result<()> {
     let root = std::env::current_dir()?;
     let files = collect_files(&root);
-
     if files.is_empty() {
         eprintln!("No se encontraron archivos de texto en {}", root.display());
         return Ok(());
     }
-
     println!("Procesando {} archivo(s)…", files.len());
-
     let header = build_header(&root, &files);
     let sections: Vec<String> = files
         .iter()
         .map(|p| build_file_section(p, &root))
         .filter(|s| !s.is_empty())
         .collect();
-
     let pages = split_into_pages(header, sections, MAX_LINES_PER_FILE);
-
     if pages.len() == 1 {
         let output_path = root.join(OUTPUT_MD);
         fs::write(&output_path, pages[0].as_bytes())?;
-
-        // Clean up zip from a previous run if it exists.
         let zip_path = root.join(OUTPUT_ZIP);
         if zip_path.exists() {
             fs::remove_file(&zip_path)?;
         }
-
         println!(
             "✓ {} generado ({} bytes)",
             OUTPUT_MD,
@@ -387,22 +426,17 @@ fn main() -> io::Result<()> {
         let mut zip = ZipWriter::new(file);
         let options = FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
-
         for (i, page) in pages.iter().enumerate() {
             let name = format!("context-{}.md", i + 1);
             zip.start_file(&name, options)?;
             zip.write_all(page.as_bytes())?;
         }
-
         let zip_file = zip.finish()?;
         let zip_size = zip_file.metadata().map(|m| m.len()).unwrap_or(0);
-
-        // Clean up single context.md from a previous run if it exists.
         let md_path = root.join(OUTPUT_MD);
         if md_path.exists() {
             fs::remove_file(&md_path)?;
         }
-
         println!(
             "✓ {} generado — {} partes, {} bytes comprimidos",
             OUTPUT_ZIP,
@@ -410,6 +444,7 @@ fn main() -> io::Result<()> {
             zip_size
         );
     }
-
     Ok(())
 }
+```
+
