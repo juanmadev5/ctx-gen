@@ -10,7 +10,7 @@ const OUTPUT_MD: &str = "context.md";
 const OUTPUT_ZIP: &str = "context.zip";
 const MAX_LINES_PER_FILE: usize = 1000;
 
-const EXCLUDED_FILENAMES: [&str; 13] = [
+const EXCLUDED_FILENAMES: [&str; 14] = [
     "Cargo.lock",
     "package-lock.json",
     "yarn.lock",
@@ -24,6 +24,7 @@ const EXCLUDED_FILENAMES: [&str; 13] = [
     "mix.lock",
     "packages.lock.json",
     "go.sum",
+    "pubspec.lock"
 ];
 
 const TEXT_EXTENSIONS: [&str; 84] = [
